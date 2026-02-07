@@ -242,8 +242,19 @@ class SlurmRunner(Runner):
 
             # Common SLURM error patterns
             # Users can extend this list with more patterns
-            if 'DUE TO TIME LIMIT' in content or ('CANCELLED' in content and 'TIME LIMIT' in content):
+            
+            # Check for time limit first (SLURM killed the job)
+            if 'DUE TO TIME LIMIT' in content:
                 return "SLURM: Job exceeded time limit"
+            
+            # Check for user cancellation
+            if 'CANCELLED' in content:
+                # If cancelled with time limit mentioned, it's still a timeout
+                if 'TIME LIMIT' in content:
+                    return "SLURM: Job exceeded time limit"
+                # Otherwise it's a user cancellation
+                return "SLURM: Job cancelled by user"
+            
             if 'OUT OF MEMORY' in content or 'oom-kill' in content.lower():
                 return "SLURM: Job ran out of memory"
             if 'NODE FAILURE' in content or 'Node failure' in content:
