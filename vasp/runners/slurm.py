@@ -230,7 +230,7 @@ class SlurmRunner(Runner):
         if not os.path.exists(slurm_out):
             return None
 
-        with open(slurm_out) as f:
+        with open(slurm_out, encoding='utf-8') as f:
             content = f.read()
 
         # Check for time limit first (SLURM killed the job)
