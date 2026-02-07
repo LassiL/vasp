@@ -7,6 +7,7 @@ Designed for non-blocking async operation.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -194,18 +195,100 @@ class SlurmRunner(Runner):
 
     def _check_output_files(self, directory: str) -> JobStatus:
         """Check calculation status from output files."""
-        if self._check_outcar_complete(directory):
-            return JobStatus(JobState.COMPLETE)
-
+        # First check for fatal VASP errors
         error = self._check_outcar_error(directory)
         if error:
             return JobStatus(JobState.FAILED, message=error)
+
+        # Check for SLURM-specific errors (timeout, OOM, etc.)
+        slurm_error = self._check_slurm_errors(directory)
+        if slurm_error:
+            return JobStatus(JobState.FAILED, message=slurm_error)
+
+        # Check if OUTCAR has completion marker
+        if self._check_outcar_complete(directory):
+            # Even if complete, check for convergence warnings
+            convergence_warning = self._check_convergence_warnings(directory)
+            if convergence_warning:
+                return JobStatus(JobState.FAILED, message=convergence_warning)
+            return JobStatus(JobState.COMPLETE)
 
         outcar = os.path.join(directory, 'OUTCAR')
         if os.path.exists(outcar):
             return JobStatus(JobState.FAILED, message="OUTCAR incomplete")
 
         return JobStatus(JobState.NOT_STARTED)
+
+    def _check_slurm_errors(self, directory: str) -> str | None:
+        """Check SLURM stderr file for job failures.
+
+        Args:
+            directory: Path to calculation directory.
+
+        Returns:
+            Error message if SLURM error found, None otherwise.
+        """
+        jobid = self._read_jobid(directory)
+        if not jobid:
+            return None
+
+        stderr_file = os.path.join(directory, f'slurm-{jobid}.err')
+        if not os.path.exists(stderr_file):
+            return None
+
+        try:
+            with open(stderr_file) as f:
+                content = f.read()
+
+            # Common SLURM error patterns
+            # Users can extend this list with more patterns
+            if 'DUE TO TIME LIMIT' in content or ('CANCELLED' in content and 'TIME LIMIT' in content):
+                return "SLURM: Job exceeded time limit"
+            if 'OUT OF MEMORY' in content or 'oom-kill' in content.lower():
+                return "SLURM: Job ran out of memory"
+            if 'NODE FAILURE' in content or 'Node failure' in content:
+                return "SLURM: Node failure"
+
+        except Exception:
+            pass
+
+        return None
+
+    def _check_convergence_warnings(self, directory: str) -> str | None:
+        """Check OUTCAR for convergence issues (NSW/NELM limits reached).
+
+        This is checked even when OUTCAR shows the completion marker,
+        since VASP prints "General timing and accounting" even when
+        hitting NSW or NELM limits without converging.
+
+        Args:
+            directory: Path to calculation directory.
+
+        Returns:
+            Warning message if convergence issue found, None otherwise.
+        """
+        outcar = os.path.join(directory, 'OUTCAR')
+        if not os.path.exists(outcar):
+            return None
+
+        try:
+            with open(outcar, 'rb') as f:
+                content = f.read().decode('utf-8', errors='ignore')
+
+            # Check for electronic convergence failure (NELM)
+            # Users can add more patterns here for specific NELM messages
+            if 'aborting loop' in content.lower() and 'NELM' in content:
+                return "Electronic convergence not reached (NELM limit)"
+
+            # Check for ionic convergence failure (NSW)
+            # Common patterns - users can extend this
+            if re.search(r'reached\s+(?:the\s+)?maximum\s+number\s+of\s+(?:ionic\s+)?steps', content, re.IGNORECASE):
+                return "Ionic relaxation not converged (NSW limit reached)"
+
+        except Exception:
+            pass
+
+        return None
 
     def _create_script(self, directory: str) -> str:
         """Generate SLURM batch script."""
