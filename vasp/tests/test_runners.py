@@ -356,6 +356,67 @@ class TestSlurmRunner:
         # Should check squeue, then fall back to OUTCAR
         assert status.state == JobState.COMPLETE
 
+    def test_check_slurm_errors_time_limit(self, temp_dir):
+        """Test SLURM error detection for time limit exceeded."""
+        runner = SlurmRunner()
+
+        # Create job ID file
+        with open(os.path.join(temp_dir, ".slurm_jobid"), "w") as f:
+            f.write("12345")
+
+        # Create stderr file with time limit error
+        with open(os.path.join(temp_dir, "slurm-12345.err"), "w") as f:
+            f.write("slurmstepd: error: *** JOB 12345 ON node001 CANCELLED AT 2024-01-01T10:00:00 DUE TO TIME LIMIT ***\n")
+
+        error = runner._check_slurm_errors(temp_dir)
+        assert error == "SLURM: Job exceeded time limit"
+
+    def test_check_slurm_errors_cancelled_with_time_limit(self, temp_dir):
+        """Test SLURM error detection for cancelled job mentioning time limit."""
+        runner = SlurmRunner()
+
+        # Create job ID file
+        with open(os.path.join(temp_dir, ".slurm_jobid"), "w") as f:
+            f.write("12346")
+
+        # Create stderr file with cancelled and time limit
+        with open(os.path.join(temp_dir, "slurm-12346.err"), "w") as f:
+            f.write("slurmstepd: error: *** JOB 12346 ON node002 CANCELLED ***\n")
+            f.write("Job was approaching TIME LIMIT\n")
+
+        error = runner._check_slurm_errors(temp_dir)
+        assert error == "SLURM: Job exceeded time limit"
+
+    def test_check_slurm_errors_user_cancelled(self, temp_dir):
+        """Test SLURM error detection for user cancelled job."""
+        runner = SlurmRunner()
+
+        # Create job ID file
+        with open(os.path.join(temp_dir, ".slurm_jobid"), "w") as f:
+            f.write("12347")
+
+        # Create stderr file with only cancelled (no time limit)
+        with open(os.path.join(temp_dir, "slurm-12347.err"), "w") as f:
+            f.write("slurmstepd: error: *** JOB 12347 ON node003 CANCELLED AT 2024-01-01T10:00:00 ***\n")
+
+        error = runner._check_slurm_errors(temp_dir)
+        assert error == "SLURM: Job cancelled by user"
+
+    def test_check_slurm_errors_no_error(self, temp_dir):
+        """Test SLURM error detection when no error present."""
+        runner = SlurmRunner()
+
+        # Create job ID file
+        with open(os.path.join(temp_dir, ".slurm_jobid"), "w") as f:
+            f.write("12348")
+
+        # Create stderr file with normal output (no errors)
+        with open(os.path.join(temp_dir, "slurm-12348.err"), "w") as f:
+            f.write("Job started successfully\n")
+
+        error = runner._check_slurm_errors(temp_dir)
+        assert error is None
+
     def test_repr(self):
         """Test string representation."""
         runner = SlurmRunner(partition="gpu", nodes=4)
