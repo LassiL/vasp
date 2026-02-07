@@ -197,6 +197,11 @@ class SlurmRunner(Runner):
         if self._check_outcar_complete(directory):
             return JobStatus(JobState.COMPLETE)
 
+        # Check for SLURM-specific errors first
+        slurm_error = self._check_slurm_errors(directory)
+        if slurm_error:
+            return JobStatus(JobState.FAILED, message=slurm_error)
+
         error = self._check_outcar_error(directory)
         if error:
             return JobStatus(JobState.FAILED, message=error)
@@ -206,6 +211,41 @@ class SlurmRunner(Runner):
             return JobStatus(JobState.FAILED, message="OUTCAR incomplete")
 
         return JobStatus(JobState.NOT_STARTED)
+
+    def _check_slurm_errors(self, directory: str) -> str | None:
+        """Check SLURM output files for timeout and cancellation errors.
+
+        Args:
+            directory: Path to calculation directory.
+
+        Returns:
+            Error message if found, None otherwise.
+        """
+        jobid = self._read_jobid(directory)
+        if not jobid:
+            return None
+
+        # Check SLURM output file
+        slurm_out = os.path.join(directory, f'slurm-{jobid}.out')
+        if not os.path.exists(slurm_out):
+            return None
+
+        with open(slurm_out) as f:
+            content = f.read()
+
+        # Check for time limit first (SLURM killed the job)
+        if 'DUE TO TIME LIMIT' in content:
+            return "SLURM: Job exceeded time limit"
+
+        # Check for user cancellation
+        if 'CANCELLED' in content:
+            # If cancelled due to time limit, it's still a timeout
+            if 'TIME LIMIT' in content:
+                return "SLURM: Job exceeded time limit"
+            # Otherwise it's a user cancellation
+            return "SLURM: Job cancelled by user"
+
+        return None
 
     def _create_script(self, directory: str) -> str:
         """Generate SLURM batch script."""
