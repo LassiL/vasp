@@ -242,11 +242,11 @@ class SlurmRunner(Runner):
 
             # Common SLURM error patterns
             # Users can extend this list with more patterns
-            
+
             # Check for time limit first (SLURM killed the job)
             if 'DUE TO TIME LIMIT' in content:
                 return "SLURM: Job exceeded time limit"
-            
+
             # Check for user cancellation
             if 'CANCELLED' in content:
                 # If cancelled with time limit mentioned, it's still a timeout
