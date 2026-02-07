@@ -230,8 +230,12 @@ class SlurmRunner(Runner):
         if not os.path.exists(slurm_out):
             return None
 
-        with open(slurm_out, encoding='utf-8') as f:
-            content = f.read()
+        try:
+            with open(slurm_out, encoding='utf-8', errors='replace') as f:
+                content = f.read()
+        except Exception:
+            # If we can't read the SLURM output file, skip error detection
+            return None
 
         # Check for time limit first (SLURM killed the job)
         if 'DUE TO TIME LIMIT' in content:
